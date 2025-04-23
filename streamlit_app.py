@@ -1,0 +1,114 @@
+import streamlit as st
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime, date
+
+# -------- Streamlit UI --------
+st.title("⛳ Chronogolf Tee Time Finder")
+
+email = st.text_input("Chronogolf Email")
+password = st.text_input("Password", type="password")
+selected_date = st.date_input("Date", min_value=date.today())
+time_frame = st.selectbox("Time Frame", ["Morning (5am-11am)", "Afternoon (11am-4pm)", "Evening (4pm-8pm)"])
+num_players = st.selectbox("Number of Players", [1, 2, 3, 4])
+hole_preference = st.selectbox("Round Type", ["9 Holes", "18 Holes"])
+
+search = st.button("Find Tee Times")
+
+# -------- Helper Functions --------
+def login_to_chronogolf(email, password):
+    session = requests.Session()
+    login_url = "https://www.chronogolf.com/en/users/sign_in"
+    r = session.get(login_url)
+    soup = BeautifulSoup(r.text, 'html.parser')
+    token = soup.find("meta", {"name": "csrf-token"})
+
+    if not token:
+        st.error("Could not find CSRF token.")
+        return None
+
+    login_data = {
+        "user[email]": email,
+        "user[password]": password,
+        "authenticity_token": token["content"],
+        "commit": "Log in"
+    }
+
+    headers = {"Referer": login_url, "User-Agent": "Mozilla/5.0"}
+    res = session.post(login_url, data=login_data, headers=headers)
+
+    if res.url != login_url:
+        return session
+    else:
+        st.error("Login failed. Check credentials.")
+        return None
+
+def time_filter(hour, time_frame):
+    if time_frame.startswith("Morning"):
+        return 5 <= hour < 11
+    elif time_frame.startswith("Afternoon"):
+        return 11 <= hour < 16
+    else:
+        return 16 <= hour <= 20
+
+def scrape_course(session, course_url, selected_date, time_frame, hole_preference):
+    results = []
+    url = f"{course_url}/booking/day/{selected_date}"
+    r = session.get(url)
+    soup = BeautifulSoup(r.text, "html.parser")
+    tee_times = soup.find_all("div", class_="booking-time")
+
+    for tee in tee_times:
+        time_tag = tee.find("div", class_="hour")
+        details = tee.find("div", class_="details")
+        if not time_tag or not details:
+            continue
+
+        time_str = time_tag.text.strip()
+        time_obj = datetime.strptime(time_str, "%I:%M %p")
+        hour = time_obj.hour
+        
+        if not time_filter(hour, time_frame):
+            continue
+
+        hole_text = "18 Holes" if "18" in details.text else "9 Holes"
+        if hole_preference != hole_text:
+            continue
+
+        player_info = details.text.strip()
+        
+        results.append({
+            "Course": course_url.split("/")[-1].replace("-", " ").title(),
+            "Date": selected_date.strftime("%Y-%m-%d"),
+            "Time": time_str,
+            "Holes": hole_text,
+            "Details": player_info
+        })
+
+    return results
+
+# -------- Main Execution --------
+course_urls = [
+    "https://www.chronogolf.com/club/river-oaks-golf-course-utah",
+    "https://www.chronogolf.com/club/south-mountain-slco",
+    "https://www.chronogolf.com/club/riverbend-slco",
+    "https://www.chronogolf.com/club/old-mill-slco"
+]
+
+if search:
+    if not email or not password:
+        st.warning("Please enter your login credentials.")
+    else:
+        session = login_to_chronogolf(email, password)
+        if session:
+            all_results = []
+            for course_url in course_urls:
+                st.write(f"Checking: {course_url.split('/')[-1].replace('-', ' ').title()}")
+                course_results = scrape_course(session, course_url, selected_date, time_frame, hole_preference)
+                all_results.extend(course_results)
+
+            if all_results:
+                st.success(f"Found {len(all_results)} matching tee times:")
+                st.dataframe(all_results)
+            else:
+                st.info("No tee times found matching your filters.")
