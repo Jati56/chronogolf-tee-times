@@ -21,7 +21,9 @@ def login_to_chronogolf(email, password):
     login_url = "https://www.chronogolf.com/en/users/sign_in"
     r = session.get(login_url)
     soup = BeautifulSoup(r.text, 'html.parser')
-    token = soup.find("meta", {"name": "csrf-token"})
+    token_tag = soup.find("meta", attrs={"name": "csrf-token"})
+    token = token_tag["content"] if token_tag else None
+
 
     if not token:
         st.error("Could not find CSRF token.")
